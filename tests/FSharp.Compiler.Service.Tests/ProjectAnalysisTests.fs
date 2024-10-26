@@ -5664,6 +5664,49 @@ type UseTheThings(i:int) =
 [<Theory>]
 // [<InlineData true>] // Flaky, reenable when stable
 [<InlineData false>]
+let ``Unused opens smoke test auto open type`` useTransparentCompiler =
+
+    let fileName1 = Path.ChangeExtension(getTemporaryFileName (), ".fs")
+    let base2 = getTemporaryFileName ()
+    let dllName = Path.ChangeExtension(base2, ".dll")
+    let projFileName = Path.ChangeExtension(base2, ".fsproj")
+    let fileSource1Text = """
+namespace SomeOtherNamespace
+
+[<AutoOpen>]
+type SomeUnusedType =
+    static member y = 1
+
+namespace Test
+
+open SomeOtherNamespace
+
+type UseTheThings(i:int) =
+    member x.UseSomeOtherNamespaceTypeMember() = y
+"""
+    let fileSource1 = SourceText.ofString fileSource1Text
+    FileSystem.OpenFileForWriteShim(fileName1).Write(fileSource1Text)
+
+    let fileNames = [|fileName1|]
+    let args = mkProjectCommandLineArgs (dllName, [])
+    let keepAssemblyContentsChecker = FSharpChecker.Create(keepAssemblyContents=true, useTransparentCompiler=useTransparentCompiler)
+    let options = { keepAssemblyContentsChecker.GetProjectOptionsFromCommandLineArgs (projFileName, args) with SourceFiles = fileNames }
+
+    let fileCheckResults =
+        keepAssemblyContentsChecker.ParseAndCheckFileInProject(fileName1, 0, fileSource1, options)  |> Async.RunImmediate
+        |> function
+            | _, FSharpCheckFileAnswer.Succeeded(res) -> res
+            | _ -> failwithf "Parsing aborted unexpectedly..."
+    let lines = FileSystem.OpenFileForReadShim(fileName1).ReadAllLines()
+    let unusedOpens = UnusedOpens.getUnusedOpens (fileCheckResults, (fun i -> lines[i-1])) |> Async.RunImmediate
+    let unusedOpensData = [ for uo in unusedOpens -> tups uo, lines[uo.StartLine-1] ]
+    let expected = []
+    unusedOpensData |> shouldEqual expected
+
+
+[<Theory>]
+// [<InlineData true>] // Flaky, reenable when stable
+[<InlineData false>]
 let ``Unused opens smoke test auto open`` useTransparentCompiler =
 
     let fileName1 = Path.ChangeExtension(getTemporaryFileName (), ".fs")
@@ -5701,6 +5744,7 @@ open SomeUsedModuleContainingActivePattern
 open SomeUsedModuleContainingUnion
 
 type UseTheThings(i:int) =
+    member x.UseSomeOtherNamespaceTypeMember() = SomeUnusedType.x
     member x.Value = Dictionary<int,int>() // use something from System.Collections.Generic, as a constructor
     member x.UseSomeUsedModuleContainingFunction() = g 3
     member x.UseSomeUsedModuleContainingActivePattern(ActivePattern g) = g
